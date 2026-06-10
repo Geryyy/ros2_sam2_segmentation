@@ -10,3 +10,4 @@
     sync_slop: 0.1
     sync_queue_size: 10
     min_mask_score: 0.0
+    log_every_n_frames: 10

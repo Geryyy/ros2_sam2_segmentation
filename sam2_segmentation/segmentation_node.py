@@ -25,6 +25,7 @@ import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray
 
@@ -58,6 +59,7 @@ class Sam2SegmentationNode(Node):
         self.declare_parameter('sync_queue_size', 10)
         # Score below which a SAM mask is dropped.
         self.declare_parameter('min_mask_score', 0.0)
+        self.declare_parameter('log_every_n_frames', 10)
 
         self.image_topic = self.get_parameter('image_topic').value
         self.detections_topic = self.get_parameter('detections_topic').value
@@ -66,6 +68,9 @@ class Sam2SegmentationNode(Node):
         device = self.get_parameter('device').value
         self.multimask_output = bool(self.get_parameter('multimask_output').value)
         self.min_mask_score = float(self.get_parameter('min_mask_score').value)
+        self.log_every_n_frames = max(
+            1, int(self.get_parameter('log_every_n_frames').value))
+        self.frame_count = 0
 
         if device == 'cuda' and not torch.cuda.is_available():
             self.get_logger().warn('CUDA requested but not available; using CPU.')
@@ -90,11 +95,13 @@ class Sam2SegmentationNode(Node):
         # --- Publishers ---------------------------------------------------
         self.det_pub = self.create_publisher(Detection2DArray, '~/detections', 10)
         self.mask_pub = self.create_publisher(Image, '~/instance_mask', 10)
+        self.debug_mask_pub = self.create_publisher(Image, '~/debug_mask', 10)
 
         # --- Synchronized subscribers ------------------------------------
         queue_size = int(self.get_parameter('sync_queue_size').value)
         slop = float(self.get_parameter('sync_slop').value)
-        self.image_sub = message_filters.Subscriber(self, Image, self.image_topic)
+        self.image_sub = message_filters.Subscriber(
+            self, Image, self.image_topic, qos_profile=qos_profile_sensor_data)
         self.det_sub = message_filters.Subscriber(
             self, Detection2DArray, self.detections_topic)
         self.sync = message_filters.ApproximateTimeSynchronizer(
@@ -119,7 +126,11 @@ class Sam2SegmentationNode(Node):
         return np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
 
     def on_synced(self, image_msg: Image, det_msg: Detection2DArray) -> None:
+        self.frame_count += 1
         if not det_msg.detections:
+            if (self.frame_count % self.log_every_n_frames) == 0:
+                self.get_logger().info(
+                    f'Synced frame {self.frame_count}: no detections; publishing empty mask.')
             # Nothing to prompt with; still publish an empty mask for consumers.
             self._publish_empty(image_msg, det_msg)
             return
@@ -171,9 +182,19 @@ class Sam2SegmentationNode(Node):
         encoding = 'mono16' if label_dtype == np.uint16 else 'mono8'
         mask_msg = self.bridge.cv2_to_imgmsg(instance, encoding=encoding)
         mask_msg.header = image_msg.header
+        debug_mask_msg = self.bridge.cv2_to_imgmsg(
+            ((instance > 0) * 255).astype(np.uint8), encoding='mono8')
+        debug_mask_msg.header = image_msg.header
 
         self.det_pub.publish(out)
         self.mask_pub.publish(mask_msg)
+        self.debug_mask_pub.publish(debug_mask_msg)
+        if (self.frame_count % self.log_every_n_frames) == 0:
+            nonzero = int(np.count_nonzero(instance))
+            self.get_logger().info(
+                f'Synced frame {self.frame_count}: '
+                f'boxes={len(det_msg.detections)} masks={len(out.detections)} '
+                f'nonzero_pixels={nonzero}.')
 
     def _publish_empty(self, image_msg: Image, det_msg: Detection2DArray) -> None:
         try:
@@ -182,10 +203,13 @@ class Sam2SegmentationNode(Node):
             instance = np.zeros((height, width), dtype=np.uint8)
             mask_msg = self.bridge.cv2_to_imgmsg(instance, encoding='mono8')
             mask_msg.header = image_msg.header
+            debug_mask_msg = self.bridge.cv2_to_imgmsg(instance, encoding='mono8')
+            debug_mask_msg.header = image_msg.header
             out = Detection2DArray()
             out.header = image_msg.header
             self.det_pub.publish(out)
             self.mask_pub.publish(mask_msg)
+            self.debug_mask_pub.publish(debug_mask_msg)
         except Exception as exc:  # noqa: BLE001
             self.get_logger().error(f'Failed to publish empty result: {exc}')
 
@@ -198,9 +222,13 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        try:
+            node.destroy_node()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == '__main__':

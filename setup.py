@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'sam2_segmentation_node = sam2_segmentation.segmentation_node:main',
+            'sam2_video_segmentation_node = sam2_segmentation.video_segmentation_node:main',
         ],
     },
 )
