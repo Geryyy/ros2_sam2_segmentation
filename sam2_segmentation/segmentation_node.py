@@ -162,7 +162,7 @@ class Sam2SegmentationNode(Node):
             if score < self.min_mask_score:
                 continue
             mask = masks[i, best[i]] > 0.0
-            instance[mask] = i + 1
+            instance[mask] = len(out.detections) + 1
             det = det_msg.detections[i]
             if det.results:
                 det.results[0].hypothesis.score = score
