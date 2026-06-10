@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sam2_segmentation</name>
+  <version>0.1.0</version>
+  <description>
+    Prompted image segmentation using SAM 2.1 (Segment Anything Model 2).
+    Takes box prompts (e.g. from a 2D detector) plus a camera image and
+    publishes per-object masks as a vision_msgs/Detection2DArray alongside an
+    instance label image.
+  </description>
+  <maintainer email="gerald.ebmer@gmail.com">Gerald Ebmer</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>vision_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>message_filters</exec_depend>
+
+  <!--
+    Runtime Python dependencies (torch, torchvision, sam2, numpy, opencv)
+    are installed via pip in the devcontainer image, not via rosdep.
+  -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

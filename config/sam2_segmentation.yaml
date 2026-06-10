@@ -1,0 +1,12 @@
+/**:
+  ros__parameters:
+    image_topic: /camera/color/image_raw
+    detections_topic: /detections
+    model_cfg: configs/sam2.1/sam2.1_hiera_b+.yaml
+    # Leave empty to use $SAM2_CHECKPOINT_DIR/sam2.1_hiera_base_plus.pt
+    checkpoint: ""
+    device: cuda
+    multimask_output: false
+    sync_slop: 0.1
+    sync_queue_size: 10
+    min_mask_score: 0.0
