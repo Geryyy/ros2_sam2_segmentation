@@ -19,6 +19,7 @@ from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+from std_msgs.msg import Float64
 from std_msgs.msg import Float64MultiArray
 from vision_msgs.msg import Detection2DArray
 
@@ -85,6 +86,11 @@ class Sam2VideoSegmentationNode(Node):
         self.mask_pub = self.create_publisher(Image, '~/instance_mask', 10)
         self.debug_mask_pub = self.create_publisher(Image, '~/debug_mask', 10)
         self.timing_pub = self.create_publisher(Float64MultiArray, '~/timing', 10)
+        self.timing_frames_pub = self.create_publisher(Float64, '~/timing/frames', 10)
+        self.timing_objects_pub = self.create_publisher(Float64, '~/timing/objects', 10)
+        self.timing_total_ms_pub = self.create_publisher(Float64, '~/timing/total_ms', 10)
+        self.timing_per_frame_ms_pub = self.create_publisher(
+            Float64, '~/timing/per_frame_ms', 10)
 
         self._lock = threading.Lock()
         self._processing = False
@@ -196,6 +202,11 @@ class Sam2VideoSegmentationNode(Node):
                 elapsed_ms / float(len(clip)),
             ]
             self.timing_pub.publish(timing_msg)
+            self.timing_frames_pub.publish(Float64(data=float(len(clip))))
+            self.timing_objects_pub.publish(Float64(data=float(len(boxes))))
+            self.timing_total_ms_pub.publish(Float64(data=elapsed_ms))
+            self.timing_per_frame_ms_pub.publish(
+                Float64(data=elapsed_ms / float(len(clip))))
             self.get_logger().info(f'Finished SAM2 video clip in {elapsed_ms:.1f} ms.')
         except Exception as exc:  # noqa: BLE001
             self.get_logger().error(f'SAM2 video clip failed: {exc}')

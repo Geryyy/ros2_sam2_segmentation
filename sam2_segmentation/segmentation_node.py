@@ -20,6 +20,7 @@ detections array.
 """
 
 import os
+import time
 
 import numpy as np
 import rclpy
@@ -27,6 +28,7 @@ from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+from std_msgs.msg import Float64
 from vision_msgs.msg import Detection2DArray
 
 import message_filters
@@ -96,6 +98,14 @@ class Sam2SegmentationNode(Node):
         self.det_pub = self.create_publisher(Detection2DArray, '~/detections', 10)
         self.mask_pub = self.create_publisher(Image, '~/instance_mask', 10)
         self.debug_mask_pub = self.create_publisher(Image, '~/debug_mask', 10)
+        self.timing_total_ms_pub = self.create_publisher(Float64, '~/timing/total_ms', 10)
+        self.timing_convert_ms_pub = self.create_publisher(Float64, '~/timing/convert_ms', 10)
+        self.timing_infer_ms_pub = self.create_publisher(Float64, '~/timing/infer_ms', 10)
+        self.timing_publish_ms_pub = self.create_publisher(Float64, '~/timing/publish_ms', 10)
+        self.timing_boxes_pub = self.create_publisher(Float64, '~/timing/boxes', 10)
+        self.timing_masks_pub = self.create_publisher(Float64, '~/timing/masks', 10)
+        self.timing_nonzero_pixels_pub = self.create_publisher(
+            Float64, '~/timing/nonzero_pixels', 10)
 
         # --- Synchronized subscribers ------------------------------------
         queue_size = int(self.get_parameter('sync_queue_size').value)
@@ -126,6 +136,7 @@ class Sam2SegmentationNode(Node):
         return np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
 
     def on_synced(self, image_msg: Image, det_msg: Detection2DArray) -> None:
+        t_start = time.perf_counter()
         self.frame_count += 1
         if not det_msg.detections:
             if (self.frame_count % self.log_every_n_frames) == 0:
@@ -133,10 +144,20 @@ class Sam2SegmentationNode(Node):
                     f'Synced frame {self.frame_count}: no detections; publishing empty mask.')
             # Nothing to prompt with; still publish an empty mask for consumers.
             self._publish_empty(image_msg, det_msg)
+            total_ms = (time.perf_counter() - t_start) * 1000.0
+            self._publish_timing(
+                total_ms=total_ms,
+                convert_ms=0.0,
+                infer_ms=0.0,
+                publish_ms=total_ms,
+                boxes=0,
+                masks=0,
+                nonzero_pixels=0)
             return
 
         try:
             rgb = self.bridge.imgmsg_to_cv2(image_msg, desired_encoding='rgb8')
+            t_after_convert = time.perf_counter()
         except Exception as exc:  # noqa: BLE001 - report and skip frame
             self.get_logger().error(f'cv_bridge conversion failed: {exc}')
             return
@@ -150,6 +171,7 @@ class Sam2SegmentationNode(Node):
                 self.predictor.set_image(rgb)
                 masks, scores, _ = self.predictor.predict(
                     box=boxes, multimask_output=self.multimask_output)
+            t_after_infer = time.perf_counter()
         except Exception as exc:  # noqa: BLE001
             self.get_logger().error(f'SAM 2 inference failed: {exc}')
             return
@@ -189,12 +211,39 @@ class Sam2SegmentationNode(Node):
         self.det_pub.publish(out)
         self.mask_pub.publish(mask_msg)
         self.debug_mask_pub.publish(debug_mask_msg)
+        t_after_publish = time.perf_counter()
+        nonzero = int(np.count_nonzero(instance))
+        self._publish_timing(
+            total_ms=(t_after_publish - t_start) * 1000.0,
+            convert_ms=(t_after_convert - t_start) * 1000.0,
+            infer_ms=(t_after_infer - t_after_convert) * 1000.0,
+            publish_ms=(t_after_publish - t_after_infer) * 1000.0,
+            boxes=len(det_msg.detections),
+            masks=len(out.detections),
+            nonzero_pixels=nonzero)
         if (self.frame_count % self.log_every_n_frames) == 0:
-            nonzero = int(np.count_nonzero(instance))
             self.get_logger().info(
                 f'Synced frame {self.frame_count}: '
                 f'boxes={len(det_msg.detections)} masks={len(out.detections)} '
                 f'nonzero_pixels={nonzero}.')
+
+    def _publish_timing(
+        self,
+        total_ms: float,
+        convert_ms: float,
+        infer_ms: float,
+        publish_ms: float,
+        boxes: int,
+        masks: int,
+        nonzero_pixels: int,
+    ) -> None:
+        self.timing_total_ms_pub.publish(Float64(data=total_ms))
+        self.timing_convert_ms_pub.publish(Float64(data=convert_ms))
+        self.timing_infer_ms_pub.publish(Float64(data=infer_ms))
+        self.timing_publish_ms_pub.publish(Float64(data=publish_ms))
+        self.timing_boxes_pub.publish(Float64(data=float(boxes)))
+        self.timing_masks_pub.publish(Float64(data=float(masks)))
+        self.timing_nonzero_pixels_pub.publish(Float64(data=float(nonzero_pixels)))
 
     def _publish_empty(self, image_msg: Image, det_msg: Detection2DArray) -> None:
         try:
